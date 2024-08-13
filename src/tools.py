@@ -4,6 +4,7 @@ import matplotlib.colors as colors
 from sklearn.mixture import GaussianMixture
 from scipy.optimize import curve_fit
 from scipy import ndimage
+import sys
 
 def extract_vdf(file,cid,box=-1):
     import numpy as np
@@ -18,6 +19,10 @@ def extract_vdf(file,cid,box=-1):
     vcells = f.read_velocity_cells(cid) 
     keys = list(vcells.keys())
     values = list(vcells.values())
+
+    
+    true_bytes = sys.getsizeof(keys[::4**3])+sys.getsizeof(values)
+    print(len(values), 'values in the sparse VDF (+ block indices), expect size of ', 4*len(values), 'B plus some, got', true_bytes, 'B')
 
     # -- generate a velocity space
     size = f.get_velocity_mesh_size()
@@ -49,9 +54,9 @@ def extract_vdf(file,cid,box=-1):
     dist = dist.reshape(4*int(size[0]),4*int(size[1]),4*int(size[2]))
     vdf=dist
     i,j,k = np.unravel_index(np.nanargmax(vdf), vdf.shape)
-    len=box
-    data=vdf[(i-len):(i+len),(j-len):(j+len),(k-len):(k+len)]
-    return np.array(data,dtype=np.float32)
+    boxlen=box
+    data=vdf[(i-boxlen):(i+boxlen),(j-boxlen):(j+boxlen),(k-boxlen):(k+boxlen)]
+    return np.array(data,dtype=np.float32), true_bytes
 
 
 def plot_vdfs(a,b, vdf_vmin = 1e-16):
