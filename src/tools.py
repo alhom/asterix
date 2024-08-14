@@ -4,6 +4,7 @@ import matplotlib.colors as colors
 from sklearn.mixture import GaussianMixture
 from scipy.optimize import curve_fit
 from scipy import ndimage
+import sys
 
 
 def extract_vdf(file, cid, box=-1):
@@ -19,6 +20,10 @@ def extract_vdf(file, cid, box=-1):
     vcells = f.read_velocity_cells(cid)
     keys = list(vcells.keys())
     values = list(vcells.values())
+
+    
+    true_bytes = sys.getsizeof(keys[::4**3])+sys.getsizeof(values)
+    print(len(values), 'values in the sparse VDF (+ block indices), expect size of ', 4*len(values), 'B plus some, got', true_bytes, 'B')
 
     # -- generate a velocity space
     size = f.get_velocity_mesh_size()
@@ -50,9 +55,9 @@ def extract_vdf(file, cid, box=-1):
     dist = dist.reshape(4 * int(size[0]), 4 * int(size[1]), 4 * int(size[2]))
     vdf = dist
     i, j, k = np.unravel_index(np.nanargmax(vdf), vdf.shape)
-    len = box
-    data = vdf[(i - len) : (i + len), (j - len) : (j + len), (k - len) : (k + len)]
-    return np.array(data, dtype=np.float32)
+    boxlen = box
+    data = vdf[(i - boxlen) : (i + boxlen), (j - boxlen) : (j + boxlen), (k - boxlen) : (k + boxlen)]
+    return np.array(data, dtype=np.float32), true_bytes
 
 
 def plot_vdfs(a, b, vdf_vmin=1e-16,save=False,output_name=None):
@@ -203,11 +208,16 @@ def print_comparison_stats(a, b):
         wsy = np.arange(vdf.shape[1]) - mean_velocity_y
         wsz = np.arange(vdf.shape[2]) - mean_velocity_z
 
-        vgrid = np.stack(np.meshgrid(wsx, wsy, wsz, indexing="xy"))
-        print(vgrid.shape)
-
-        pressure = np.sum(vdf * vgrid[:, :, None] * vgrid[:, None, :], axis=(0, 1, 2))
-
+        vgrid = np.stack(np.meshgrid(wsx,wsy,wsz,indexing='xy'))
+        vshape = vgrid.shape[1:]
+        vgrid = vgrid.reshape((3,np.prod(vshape)))
+        wgrid = (vgrid[None,:,:]*vgrid[:,None,:])
+        
+        wgrid = wgrid.reshape((3,3,*vshape))
+        # print(wgrid)
+        pressure = np.sum(vdf[None,None,:,:,:]*wgrid,axis=(2,3,4))
+        # print('ptensor', pressure)
+        
         return density, (mean_velocity_x, mean_velocity_y, mean_velocity_z), pressure
 
     def relative_norms(a, b):
