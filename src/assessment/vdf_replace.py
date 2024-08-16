@@ -298,13 +298,77 @@ def add_reconstructed_velocity_space_mpi(dst, cellid, blocks_and_values, bpc):
 
     return
 
+def blockdata_to_vdfmap(f, blocks, blockdata):
+    # Construct velocity cells:
+      WID  = f.get_WID()
+      WID2 = WID*WID
+      WID3 = WID2*WID
+      velocity_cell_ids = []
+      for kv in range(WID):
+         for jv in range(WID):
+            for iv in range(WID):
+               velocity_cell_ids.append(kv*WID2 + jv*WID + iv)
 
-def reconstruct_vdf(f, cid,sparsity ,reconstruction_method):
+      array_size = len(blockdata)
+      velocity_cells = {}
+
+      for i in range(array_size):
+         velocity_block_id = blocks[i] #data_block_ids[i]
+         avgIndex = 0
+         avgs =blockdata[i]
+
+         for j in velocity_cell_ids + WID3*velocity_block_id:
+            velocity_cells[(int)(j)] = avgs[avgIndex]
+            avgIndex = avgIndex + 1
+
+      return list(velocity_cells.keys()), list(velocity_cells.values())
+
+def get_blocks_to_keep(f, blocks, block_mins, sparsity, pop = "proton"):
+
+    block_keep = np.zeros(blocks.shape, dtype=bool)
+    block_keep_n = np.zeros(blocks.shape, dtype=bool)
+    extents = f.get_velocity_mesh_extent(pop=pop)
+    size = f.get_velocity_mesh_size(pop=pop)
+    dv = f.get_velocity_mesh_dv(pop=pop)
+    dv = dv[0]
+    WID = f.get_WID()
+
+    for blockid in blocks:
+        block_coords = f.get_velocity_block_coordinates(blockid)
+
+        rx = int(np.floor((block_coords[0] - extents[0]) / (dv*WID)))
+        ry = int(np.floor((block_coords[1] - extents[1]) / (dv*WID)))
+        rz = int(np.floor((block_coords[2] - extents[2]) / (dv*WID)))
+
+
+        if block_mins[blockid] >= sparsity:
+            block_keep[blockid] = True
+
+            # Expand to the neighborhood of ns velocity blocks - ns should at least be 1
+            ns = 1
+            ds = list(range(-ns,ns+1))
+
+            neighbors = np.array([[rx+dx,ry+dy,rz+dz] for dx in ds for dy in ds for dz in ds if not (dx == 0 and dy == 0 and dz == 0)])
+            for d in [0,1,2]:
+                neighbors[:,d] = np.clip(neighbors[:,d],0,size[d]-1)
+
+            nIDs = f.get_velocity_blockGID(neighbors)
+            for n in nIDs:
+                block_keep_n[n] = True
+
+    # for blockid in blocks[~block_keep]:
+    #     block_data[blockid,:] = 0
+    # print(np.sum(block_keep), np.sum(block_keep_n), np.sum(block_keep | block_keep_n))
+    blocks_keep = block_keep | block_keep_n
+    return blocks_keep
+
+
+def reconstruct_vdf(f, cid, sparsity, reconstruction_method, sparsify = False):
     """
     f: VlsvReader Object
     len : boxed limits of vdfs that get reconstructed
     cid: the cellid to reconstruct
-    reconstruction_method: function that performs the reconstruction
+    reconstruction_method: function that performs the reconstruction (e.g. cm.reconstruct_cid_zfp)
     """
     print(f"Extracting CellID {cid}")
     _, reconstructed,cm_ratio = reconstruction_method(f, cid,sparsity)
@@ -318,6 +382,7 @@ def reconstruct_vdf(f, cid,sparsity ,reconstruction_method):
     blocks = np.arange(0, np.prod(size), dtype=np.int32)
     reconstructed = np.array(reconstructed, dtype=np.float32)
     block_data = np.zeros((np.prod(size), np.power(WID, 3)), dtype=np.float32)
+    block_mins = np.full(blocks.shape,fill_value=np.inf, dtype=np.float32)
     for blockid in blocks:
         block_coords = f.get_velocity_block_coordinates(blockid)
         rx = int(np.floor((block_coords[0] - extents[0]) / dv))
@@ -328,8 +393,20 @@ def reconstruct_vdf(f, cid,sparsity ,reconstruction_method):
                 for bz in range(0, WID):
                     localid = bz * WID**2 + by * WID + bx
                     block_data[blockid, localid] = reconstructed[rz + bz, ry + by, rx + bx]
+        block_mins[blockid] = np.min(block_data[blockid, :])
 
-    return blocks, block_data , cm_ratio
+    block_keep = np.zeros(blocks.shape, dtype=bool)
+    block_keep_n = np.zeros(blocks.shape, dtype=bool)
+    if sparsify:
+        blocks_keep = get_blocks_to_keep(f, blocks, block_mins, sparsity)
+        blocks = blocks[blocks_keep]
+        block_data = block_data[blocks_keep,:]
+    else:
+        pass
+
+    print("Blocks reconstructed", len(blocks))
+
+    return blocks, block_data, cm_ratio
 
 
 def reconstruct_vdf_debug(f, cid,sparsity ,reconstruction_method):

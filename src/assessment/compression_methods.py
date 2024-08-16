@@ -15,7 +15,7 @@ import pytools
 VDF_TYPE_SIZE=4
 
 def sparsify(vdf,sparsity):
-    vdf[vdf<sparsity]=0.0
+    # vdf[vdf<sparsity]=0.0
     return
     
 # MLP with fourier features
@@ -273,8 +273,264 @@ def reconstruct_cid_gmm(f, cid,sparsity):
     sparsify(final_vdf,sparsity)
     return cid, np.array(final_vdf, dtype=np.float32),1
 
+#DWT
+def reconstruct_cid_dwt_new(f, cid, sparsity):
+    import pywt
 
-# DWT
+    max_indexes, vdf,len = vdf_extract.extract(f, cid,sparsity)
+    nx, ny, nz = np.shape(vdf)
+    threshold = sparsity
+
+    def dwt_quantize_coeffs(c, quantization_dtype = None):
+
+        if quantization_dtype == None:
+            return c, [0, 1]
+        
+        if quantization_dtype.kind == 'u':
+            # print(c)
+            # cmax, coffset = np.nanmax(c[np.isfinite(c)]), np.nanmin(c[np.isfinite(c)])
+            cmax, coffset = np.nanmax(c), np.nanmin(c)
+            # print(cmax, coffset)
+
+            crange = cmax-coffset
+            dtype_max = np.iinfo(quantization_dtype).max - 1
+            dtype_min = np.iinfo(quantization_dtype).min
+            mask = ~np.isfinite(c)
+            c = (c - coffset)/(crange) * dtype_max
+            c[mask] = np.iinfo(quantization_dtype).max
+            c = c.astype(quantization_dtype)
+            
+            return c, (coffset, crange)
+        elif quantization_dtype.kind == 'f':
+            cmax, coffset = np.nanmax(c), np.nanmin(c)
+            # print(cmax, coffset)
+
+            crange = cmax-coffset
+            dtype_max = np.finfo(quantization_dtype).max
+            dtype_min = 0
+
+            c = (c - coffset)/(crange) * dtype_max
+            c[~np.isfinite(c)] = 0 #np.finfo(quantization_dtype).max
+
+            return c.astype(quantization_dtype), (coffset, crange)
+
+    def dwt_dequantize_coeffs(c, quantization_dtype = None, qdat_tuple = (0,1)):
+        if quantization_dtype == None:
+            return c
+        c = c.astype(np.float32)
+        if quantization_dtype.kind == 'u':
+            mask = c == np.iinfo(quantization_dtype).max
+            c = c/(np.iinfo(quantization_dtype).max-1)
+            c = c*qdat_tuple[1] + qdat_tuple[0]
+            c[mask] = qdat_tuple[0]
+        elif quantization_dtype.kind == 'f':
+            c = c/(np.finfo(quantization_dtype).max)
+            c = c*qdat_tuple[1] + qdat_tuple[0]
+        return c
+
+    def dwt_threshold_coeffs(c, threshold = 1e-16, high = 1e-15):
+
+        def soft_threshold(x, threshold = 1e-16):
+            return np.sign(x) * np.maximum(np.abs(x)-threshold, 0)
+
+        def hard_threshold(x, threshold = 1e-16):
+            x[x < threshold] = 0
+            return x
+
+        c = soft_threshold(c, threshold=threshold)
+        # print('value_low', threshold, 'value_high', high)
+        # c = pywt.threshold_firm(c, value_low=threshold, value_high=high)
+        # c = hard_threshold(c, threshold=threshold)
+
+        return c
+
+    #run-length encoding
+    rle_type = np.dtype(np.uint32)
+    def rle(c):
+        # print(c.shape, c.dtype)
+        rle_list_of_tuples = []
+        runcount = 0
+        v0 = 0
+        init = True
+        for v in np.nditer(c):
+            if v == v0:
+                runcount += 1
+            else:
+                if not init:
+                    if runcount > np.iinfo(rle_type).max:
+                        print("Error: runcount overflow")
+                    rle_list_of_tuples.append((runcount, v))
+                    v0 = v
+                    runcount = 0
+
+            init = False
+
+        return rle_list_of_tuples
+
+    # print(pywt.wavelist(kind='discrete'))
+
+    vdf_3d = vdf.copy().astype(np.float64)
+
+    loga = False
+    offset = np.float64(1)
+    if loga:
+        vdf_3d[vdf_3d<0]=0
+        # print(np.nanmax(vdf_3d))
+        vdf_3d = np.log10(vdf_3d + offset)
+        # print(np.nanmax(vdf_3d))
+    if loga:
+        norm = np.nanmax(vdf_3d)
+    else:
+        norm = np.nanmax(vdf_3d)
+    print("norm", norm)
+    # norm = 1
+    vdf_3d /= norm
+    orig_shape = vdf_3d.shape
+    if loga:
+        pass
+        # vdf_3d[np.isinf(vdf_3d)] = -np.inf
+        # vdf_3d[np.isnan(vdf_3d)] = 0
+
+    comp_type = np.dtype(np.uint16)
+    # comp_type = None
+    # quant = np.iinfo(comp_type).max/3
+
+
+
+
+    # print(np.nanmax(vdf_3d),np.nanmin(vdf_3d[np.isfinite(vdf_3d)]), norm)
+
+    threshold = np.float64(1e-16)
+    wavelet = 'db9'#'bior1.3'
+    # wavelet = 'bior1.3'
+    # wavelet = 'db9'
+
+    dwtn_mlevel = pywt.dwtn_max_level(vdf_3d.shape,wavelet)
+    level_delta = 0
+    discard_level = dwtn_mlevel+1
+    print("Decomposing to ", max(dwtn_mlevel-level_delta,0), "levels out of ", dwtn_mlevel, 'discarding at level', discard_level )
+    coeffs3 = pywt.wavedecn(vdf_3d,wavelet=wavelet, level = max(dwtn_mlevel-level_delta,0))
+
+    # print(coeffs3)
+    coeffs3_comp = coeffs3.copy()
+
+    print(type(coeffs3_comp))
+
+    zeros = 0
+    nonzeros = 0
+
+
+    dtype0 = np.dtype(np.float32)
+    dtype = np.dtype(np.float32)
+    if loga:
+        threshold = np.log10(threshold+offset)/norm
+    else:
+        threshold = threshold/norm
+    print(dtype0.itemsize)
+
+    coeffs3_comp_qdat = {}
+
+    for i,a in enumerate(coeffs3_comp):
+        
+        if(type(a) == type(np.ndarray(1))):
+            # print(type(a), a.dtype)
+            # print(a)
+            
+            # print(coeffs3_comp[i])
+            if loga:
+                coeffs3_comp[i] = dwt_threshold_coeffs(coeffs3_comp[i], 1e-17,1e-17)
+            else:
+                coeffs3_comp[i] = dwt_threshold_coeffs(coeffs3_comp[i], threshold=threshold, high=threshold*1000)
+            # coeffs3_comp[i] = coeffs3_comp[i].astype(dtype)
+            coeffs3_comp[i], coeffs3_comp_qdat[i] = dwt_quantize_coeffs(coeffs3_comp[i], comp_type)
+            # print(coeffs3_comp[i])
+            mask = np.abs(coeffs3_comp[i]) == 0#< threshold
+            zeros += np.sum(mask)
+            nonzeros += np.sum(~mask)
+            # nonzeros += np.prod(a.shape)
+            if not loga:
+                coeffs3_comp[i][mask] = 0
+        else:
+            coeffs3_comp_qdat.setdefault(i,{})
+            print('dict at level',i)
+            for k,v in a.items():
+                if i >= discard_level:
+                    print('discarding at level', i)
+                    coeffs3_comp[i][k] = np.zeros_like(coeffs3_comp[i][k])
+                else:
+                    if loga:
+                        coeffs3_comp[i][k] = dwt_threshold_coeffs(coeffs3_comp[i][k], threshold = 1e-17, high = 1e-17)
+                    else:
+                        coeffs3_comp[i][k] = dwt_threshold_coeffs(coeffs3_comp[i][k], threshold=threshold, high=threshold*1000)
+
+                # coeffs3_comp[i][k] = coeffs3_comp[i][k].astype(dtype)
+                coeffs3_comp[i][k], coeffs3_comp_qdat[i][k] = dwt_quantize_coeffs(coeffs3_comp[i][k], quantization_dtype=comp_type)
+
+                mask = np.abs(coeffs3_comp[i][k]) == 0# < threshold
+                
+                if not loga:
+                    coeffs3_comp[i][k][mask] = 0
+                zeros += np.sum(mask)
+                nonzeros += np.sum(~mask)
+
+    print("number of zeros:", zeros, "nonzeros:", nonzeros)
+
+
+    rle_bytes = 0
+    rle0 =rle(coeffs3_comp[0])
+    # print()
+    # print("len rle0:",len(rle0),"manual calculation of RLE bytes for first:", len(rle0)*(rle_type.itemsize+comp_type.itemsize),"sys bytes:", sys.getsizeof(rle0))
+
+    for i,a in enumerate(coeffs3_comp):
+        if(type(a) == type(np.ndarray(1))):
+            rle0 = rle(coeffs3_comp[i])
+            morebytes = len(rle0)*(rle_type.itemsize+comp_type.itemsize)
+            # print('rle bytes added: ', morebytes, 'for i',i)
+            rle_bytes += morebytes
+            coeffs3_comp[i] = dwt_dequantize_coeffs(coeffs3_comp[i], quantization_dtype=comp_type, qdat_tuple=coeffs3_comp_qdat[i])
+        else:
+            for k,v in a.items():
+                rle0 = rle(coeffs3_comp[i][k])
+                morebytes = len(rle0)*(rle_type.itemsize+comp_type.itemsize)
+                # print('rle bytes added: ', morebytes, 'for i,k', i,k)
+                rle_bytes += morebytes
+                coeffs3_comp[i][k] = dwt_dequantize_coeffs(coeffs3_comp[i][k], quantization_dtype=comp_type, qdat_tuple=coeffs3_comp_qdat[i][k])
+
+    vdf_rec = pywt.waverecn(coeffs3_comp,wavelet=wavelet)*norm
+    # print(np.min(vdf_rec),np.max(vdf_rec))
+    if loga:
+        vdf_rec = 10**vdf_rec.astype(np.float64) - offset
+
+    # print(np.min(vdf_rec),np.max(vdf_rec))
+    vdf_bytes_inflated = np.prod(vdf_3d.shape)*4
+    print('Bytes in RLE-encoded coefficients:', rle_bytes, 'bytes in vdf (inflated):',  vdf_bytes_inflated, 'bytes in sparse VDF', true_mem)
+    # print('vdf_rec',vdf_rec)
+    print('Nonzero bytes in coefficients', nonzeros*comp_type.itemsize)
+
+    # compression = np.prod(vdf_3d.shape)/nonzeros
+    # if comp_type is not None:
+    #     compression *= dtype0.itemsize/comp_type.itemsize
+
+    compression = rle_bytes/vdf_bytes_inflated
+
+    # volume_compressed = 0
+    # for k,v in coeffs3_compress.items():
+    #     volume_compressed += sys.getsizeof(v)
+    # volume_orig = 0
+    # for k,v in coeffs3.items():
+    #     volume_orig += sys.getsizeof(v)
+    # compression = volume_orig/volume_compressed
+
+    print("compression (naive):", compression)
+    print("compression (true):", rle_bytes/true_mem)
+
+    # print(np.min(vdf_rec),np.max(vdf_rec))
+    # if ~loga:
+    project_tools.plot_vdfs(vdf,vdf_rec.astype(dtype0))
+    project_tools.print_comparison_stats(vdf,vdf_rec.astype(dtype0))
+
+
+# DWT-old
 def reconstruct_cid_dwt(f, cid,sparsity):
     import pywt
     max_indexes, vdf,len = vdf_extract.extract(f, cid,sparsity)

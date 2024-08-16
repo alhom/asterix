@@ -1,6 +1,6 @@
 #some math to calculate the bulk velocity and its location in the VDF space
 def get_bulk_v(vdf,f,sparse=1e-16):
-    from scipy.integrate import simps
+    from scipy.integrate import simpson as simps
     import numpy as np
     mesh=f.get_velocity_mesh_extent()
     sz=f.get_velocity_mesh_size()
@@ -9,10 +9,10 @@ def get_bulk_v(vdf,f,sparse=1e-16):
     v_y = np.linspace(mesh[1], mesh[4], int(wid*sz[1]))
     v_z = np.linspace(mesh[2], mesh[5], int(wid*sz[2]))
     Vx, Vy, Vz = np.meshgrid(v_x, v_y, v_z, indexing='ij')
-    term_1_x = simps(simps(simps(Vx * vdf, v_z), v_y), v_x)
-    term_1_y = simps(simps(simps(Vy * vdf, v_z), v_y), v_x)
-    term_1_z = simps(simps(simps(Vz * vdf, v_z), v_y), v_x)
-    term_2 = simps(simps(simps(vdf, v_z), v_y), v_x)
+    term_1_x = simps(simps(simps(Vx * vdf, x=v_z), x=v_y), x=v_x)
+    term_1_y = simps(simps(simps(Vy * vdf, x=v_z), x=v_y), x=v_x)
+    term_1_z = simps(simps(simps(Vz * vdf, x=v_z), x=v_y), x=v_x)
+    term_2 = simps(simps(simps(vdf, x=v_z), x=v_y), x=v_x)
     bulk_v = np.array([term_1_x / term_2,term_1_y / term_2,term_1_z / term_2])    
     index_x = (np.abs(v_x - bulk_v[0])).argmin()
     index_y = (np.abs(v_y - bulk_v[1])).argmin()
@@ -40,22 +40,16 @@ def pad_array(input,shape,val=0):
         width.append((left,right))
     return np.pad(input,width,mode="constant",constant_values=val)
         
-def extract(f, cid,sparsity=1e-16,restrict_box=True):
+def inflate(f, blockids, values, pop="proton"):
     import numpy as np
-    assert cid > 0
-
-    # -- read phase space density
-    vcells = f.read_velocity_cells(cid)
-    keys = list(vcells.keys())
-    values = list(vcells.values())
-
+    
     # -- generate a velocity space
     size = f.get_velocity_mesh_size()
     vids = np.arange(4 * 4 * 4 * int(size[0]) * int(size[1]) * int(size[2]))
 
     # -- put phase space density into array
     dist = np.zeros_like(vids, dtype=float)
-    dist[keys] = values
+    dist[blockids] = values
 
     # -- sort vspace by velocity
     v = f.get_velocity_cell_coordinates(vids)
@@ -77,16 +71,47 @@ def extract(f, cid,sparsity=1e-16,restrict_box=True):
     dist = dist[k]
     dist = dist.reshape(4 * int(size[0]), 4 * int(size[1]), 4 * int(size[2]))
 
-    vdf = dist
+    return dist
+
+def restrict_bbox(f, vdf, sparsity):
+    import numpy as np
+
+    bulk_v,bulk_v_loc=get_bulk_v(vdf,f,sparsity)
+
+    bbox=get_vdf_bounding_box(vdf,sparsity)
+    bbox_max_side=np.max([bbox[3]-bbox[0]+1,bbox[4]-bbox[1]+1,bbox[5]-bbox[2]+1])
+    boxlen=bbox_max_side//2
+
+    data = vdf[(bulk_v_loc[0] - boxlen) : (bulk_v_loc[0] + boxlen), (bulk_v_loc[1] - boxlen) : (bulk_v_loc[1] + boxlen), (bulk_v_loc[2] - boxlen) : (bulk_v_loc[2] + boxlen)]
+    return bulk_v_loc,np.array(data, dtype=np.double),boxlen
+
+
+
+def extract(f, cid,sparsity=1e-16,restrict_box=True):
+    import numpy as np
+    assert cid > 0
+
+    # -- read phase space density
+    vcells = f.read_velocity_cells(cid)
+    keys = list(vcells.keys())
+    values = list(vcells.values())
+
+    
+
+    vdf = inflate(f, keys, values)
+
     bulk_v,bulk_v_loc=get_bulk_v(vdf,f,sparsity)
     bbox=get_vdf_bounding_box(vdf,sparsity)
     bbox_max_side=np.max([bbox[3]-bbox[0]+1,bbox[4]-bbox[1]+1,bbox[5]-bbox[2]+1])
-    len=bbox_max_side//2
+    boxlen=bbox_max_side//2
     if (not restrict_box):
-        return bulk_v_loc,np.array(vdf, dtype=np.double),len
-    data = vdf[(bulk_v_loc[0] - len) : (bulk_v_loc[0] + len), (bulk_v_loc[1] - len) : (bulk_v_loc[1] + len), (bulk_v_loc[2] - len) : (bulk_v_loc[2] + len)]
+        return bulk_v_loc,np.array(vdf, dtype=np.double),boxlen
+    else:
+        bulk_v_loc,vdf,boxlen = restrict_bbox(f, vdf, sparsity)
+        return bulk_v_loc,vdf,boxlen
+    data = vdf[(bulk_v_loc[0] - boxlen) : (bulk_v_loc[0] + boxlen), (bulk_v_loc[1] - boxlen) : (bulk_v_loc[1] + boxlen), (bulk_v_loc[2] - boxlen) : (bulk_v_loc[2] + boxlen)]
     # print(f"Extracted VDF shape = {np.shape(data)}")
-    return bulk_v_loc,np.array(data, dtype=np.double),len
+    return bulk_v_loc,np.array(data, dtype=np.double),boxlen
 
 
 if __name__ == "__main__":
