@@ -352,7 +352,11 @@ def get_blocks_to_keep(f, blocks, block_mins, sparsity, pop = "proton"):
             for d in [0,1,2]:
                 neighbors[:,d] = np.clip(neighbors[:,d],0,size[d]-1)
 
-            nIDs = f.get_velocity_blockGID(neighbors)
+            bIX = neighbors[:,0]
+            bIY = neighbors[:,1]
+            bIZ = neighbors[:,2]
+
+            nIDs = bIZ + bIY*size[2] + bIX*size[2]*size[1]
             for n in nIDs:
                 block_keep_n[n] = True
 
