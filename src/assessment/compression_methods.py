@@ -584,10 +584,12 @@ def reconstruct_cid_dwt(f, cid,sparsity):
 
 
 # DCT
-def reconstruct_cid_dct(f, cid,sparsity):
+def reconstruct_cid_dct(f, cid,sparsity, blocksize = 8, keep_n = 4):
     from scipy.fft import dctn, idctn
-    blocksize = 8
-    keep_n = 4
+    # blocksize = 8
+    # keep_n = 4
+    assert keep_n > 0
+    assert keep_n <= blocksize
     max_indexes, vdf,len = vdf_extract.extract(f, cid,sparsity)
     nx, ny, nz = np.shape(vdf)
     assert nx == ny == nz
@@ -633,6 +635,70 @@ def reconstruct_cid_dct(f, cid,sparsity):
     ] = reconstructed_vdf
     sparsify(final_vdf,sparsity)
     return cid, np.array(final_vdf, dtype=np.float32),1
+
+# DCT
+# def reconstruct_cid_dct_sparse(f, cid, sparsity, keep_n = 2):
+#     from scipy.fft import dctn, idctn
+#     WID = f.get_velocity_block_size()
+#     WID3 = WID**3
+#     assert keep_n > 0
+#     assert keep_n <= WID
+#     max_indexes, vdf,len = vdf_extract.extract(f, cid,sparsity)
+#     vdata  = f.read_velocity_cells(cid)
+#     blocks = np.array(list(vdata.keys())).reshape((-1,WID3))
+#     blockdata_all = np.array(list(vdata.values())).reshape((-1,WID3))
+#     blockdata_new = np.zeros_like(blockdata_all)
+#     coefficients = np.zeros_like((blockdata_all))
+
+#     blockids = blocks[:,0]//WID
+
+#     nx, ny, nz = np.shape(vdf)
+#     assert nx == ny == nz
+#     orig_shape = vdf.shape
+#     vdf[np.isnan(vdf)] = 0
+
+#     paddings = (np.ceil(np.array(vdf.shape)/8)).astype(int)*8 - vdf.shape
+#     paddings = ((0,paddings[0]),(0,paddings[1]),(0,paddings[2]))
+#     vdf = np.pad(vdf, paddings)
+
+#     for i, blockdata in enumerate(blockdata_all):
+
+
+#     for i in range(0,vdf.shape[0], WID):
+#         for j in range(0, vdf.shape[1], WID):
+#             for k in range(0, vdf.shape[2], WID):
+#                 coefficients[i:i+WID,j:j+WID, k:k+WID] = dctn(vdf[i:i+WID,j:j+WID, k:k+WID])
+
+#     zeroed = np.zeros_like(block_data)
+#     for i in range(keep_n):
+#         for j in range(keep_n):
+#             for k in range(keep_n):
+#                 zeroed[i::WID,j::WID,k::WID] = block_data[i::WID,j::WID,k::WID]
+
+
+#     volume_compressed = np.prod(keep_n*np.ceil(np.array(vdf.shape)/8))
+#     volume_orig = np.prod(vdf.shape)
+#     compression = volume_orig/volume_compressed
+
+#     vdf_rec = np.zeros_like(vdf)
+#     for i in range(0,vdf.shape[0], WID):
+#         for j in range(0, vdf.shape[1], WID):
+#             for k in range(0, vdf.shape[2], WID):
+#                 vdf_rec[i:i+WID,j:j+WID, k:k+WID] = idctn(zeroed[i:i+WID,j:j+WID, k:k+WID])
+
+#     reconstructed_vdf = vdf_rec[0:orig_shape[0],0:orig_shape[1],0:orig_shape[2]]
+#     reconstructed_vdf= np.array(reconstructed_vdf,dtype=np.double)
+#     reconstructed_vdf= np.reshape(reconstructed_vdf,orig_shape,order='C')
+#     mesh = f.get_velocity_mesh_size()
+#     final_vdf = np.zeros((int(4 * mesh[0]), int(4 * mesh[1]), int(4 * mesh[2])))
+#     final_vdf[
+#         max_indexes[0] - len : max_indexes[0] + len,
+#         max_indexes[1] - len : max_indexes[1] + len,
+#         max_indexes[2] - len : max_indexes[2] + len,
+#     ] = reconstructed_vdf
+#     sparsify(final_vdf,sparsity)
+#     return cid, np.array(final_vdf, dtype=np.float32),1
+
 
 def reconstruct_cid_vqvae(f, cid,sparsity):
     import torch

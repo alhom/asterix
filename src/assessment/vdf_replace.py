@@ -367,7 +367,7 @@ def get_blocks_to_keep(f, blocks, block_mins, sparsity, pop = "proton"):
     return blocks_keep
 
 
-def reconstruct_vdf(f, cid, sparsity, reconstruction_method, sparsify = False):
+def reconstruct_vdf(f, cid, sparsity, reconstruction_method, sparsify = False, method_kwargs = {}):
     """
     f: VlsvReader Object
     len : boxed limits of vdfs that get reconstructed
@@ -375,7 +375,7 @@ def reconstruct_vdf(f, cid, sparsity, reconstruction_method, sparsify = False):
     reconstruction_method: function that performs the reconstruction (e.g. cm.reconstruct_cid_zfp)
     """
     print(f"Extracting CellID {cid}")
-    _, reconstructed,cm_ratio = reconstruction_method(f, cid,sparsity)
+    _, reconstructed,cm_ratio = reconstruction_method(f, cid,sparsity, **method_kwargs)
     extents = f.get_velocity_mesh_extent()
     size = f.get_velocity_mesh_size()
     dv = f.get_velocity_mesh_dv()
