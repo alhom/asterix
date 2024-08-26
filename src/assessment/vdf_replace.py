@@ -399,8 +399,6 @@ def reconstruct_vdf(f, cid, sparsity, reconstruction_method, sparsify = False, m
                     block_data[blockid, localid] = reconstructed[rz + bz, ry + by, rx + bx]
         block_mins[blockid] = np.min(block_data[blockid, :])
 
-    block_keep = np.zeros(blocks.shape, dtype=bool)
-    block_keep_n = np.zeros(blocks.shape, dtype=bool)
     if sparsify:
         blocks_keep = get_blocks_to_keep(f, blocks, block_mins, sparsity)
         blocks = blocks[blocks_keep]
