@@ -277,6 +277,12 @@ def reconstruct_cid_gmm(f, cid,sparsity):
 def reconstruct_cid_dwt_new(f, cid, sparsity):
     import pywt
 
+    vcells = f.read_velocity_cells(cid)
+    keys = list(vcells.keys())
+    values = list(vcells.values())
+  
+    true_bytes = sys.getsizeof(keys[::4**3])+sys.getsizeof(values)
+
     max_indexes, vdf,len = vdf_extract.extract(f, cid,sparsity)
     nx, ny, nz = np.shape(vdf)
     threshold = sparsity
@@ -522,12 +528,14 @@ def reconstruct_cid_dwt_new(f, cid, sparsity):
     # compression = volume_orig/volume_compressed
 
     print("compression (naive):", compression)
-    print("compression (true):", rle_bytes/true_mem)
+    print("compression (true):", rle_bytes/true_bytes)
 
     # print(np.min(vdf_rec),np.max(vdf_rec))
     # if ~loga:
-    project_tools.plot_vdfs(vdf,vdf_rec.astype(dtype0))
-    project_tools.print_comparison_stats(vdf,vdf_rec.astype(dtype0))
+    # project_tools.plot_vdfs(vdf,vdf_rec.astype(dtype0))
+    # project_tools.print_comparison_stats(vdf,vdf_rec.astype(dtype0))
+
+    return cid, np.array(vdf_rec, dtype=np.float32),rle_bytes/true_bytes
 
 
 # DWT-old
